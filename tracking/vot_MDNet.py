@@ -1,20 +1,20 @@
 import numpy as np
 import os
 import sys
+import vot
 import time
 import argparse
 import json
 from PIL import Image
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 import torch
 import torch.utils.data as data
 import torch.optim as optim
 from torch.autograd import Variable
 
-sys.path.insert(0,'../modules')
-from sample_generator import *
 from data_prov import *
+from sample_generator import *
 from model import *
 from bbreg import *
 from options import *
@@ -116,14 +116,26 @@ def train(model, criterion, optimizer, pos_feats, neg_feats, maxiter, in_layer='
         #print "Iter %d, Loss %.4f" % (iter, loss.data[0])
 
 
-def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
+def run_mdnet():
+    handle = vot.VOT("rectangle")
+    selection = handle.region()
+
+    imagefile = handle.frame()
+    if not imagefile:
+        sys.exit(0)
+
+    image = Image.open(imagefile).convert('RGB')
+    pos_x = max(selection.x, 0)
+    pos_y = max(selection.y, 0)
+    target_w = min(selection.width, image.size[0] - 1)
+    target_h = min(selection.height, image.size[1] - 1)
 
     # Init bbox
-    target_bbox = np.array(init_bbox)
-    result = np.zeros((len(img_list),4))
-    result_bb = np.zeros((len(img_list),4))
-    result[0] = target_bbox
-    result_bb[0] = target_bbox
+    target_bbox = np.array([pos_x, pos_y, target_w, target_h])
+    # result = np.zeros((len(img_list),4))
+    # result_bb = np.zeros((len(img_list),4))
+    # result[0] = target_bbox
+    # result_bb[0] = target_bbox
 
     # Init model
     model = MDNet(opts['model_path'])
@@ -138,7 +150,7 @@ def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
 
     tic = time.time()
     # Load first image
-    image = Image.open(img_list[0]).convert('RGB')
+    # image = Image.open(img_list[0]).convert('RGB')
     
     # Train bbox regressor
     bbreg_examples = gen_samples(SampleGenerator('uniform', image.size, 0.3, 1.5, 1.1),
@@ -178,38 +190,43 @@ def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
     spf_total = time.time()-tic
 
     # Display
-    savefig = savefig_dir != ''
-    if display or savefig: 
-        dpi = 80.0
-        figsize = (image.size[0]/dpi, image.size[1]/dpi)
+    # savefig = savefig_dir != ''
+    # if display or savefig: 
+    #     dpi = 80.0
+    #     figsize = (image.size[0]/dpi, image.size[1]/dpi)
 
-        fig = plt.figure(frameon=False, figsize=figsize, dpi=dpi)
-        ax = plt.Axes(fig, [0., 0., 1., 1.])
-        ax.set_axis_off()
-        fig.add_axes(ax)
-        im = ax.imshow(image, aspect='normal')
+    #     fig = plt.figure(frameon=False, figsize=figsize, dpi=dpi)
+    #     ax = plt.Axes(fig, [0., 0., 1., 1.])
+    #     ax.set_axis_off()
+    #     fig.add_axes(ax)
+    #     im = ax.imshow(image, aspect='normal')
 
-        if gt is not None:
-            gt_rect = plt.Rectangle(tuple(gt[0,:2]),gt[0,2],gt[0,3], 
-                    linewidth=3, edgecolor="#00ff00", zorder=1, fill=False)
-            ax.add_patch(gt_rect)
+    #     if gt is not None:
+    #         gt_rect = plt.Rectangle(tuple(gt[0,:2]),gt[0,2],gt[0,3], 
+    #                 linewidth=3, edgecolor="#00ff00", zorder=1, fill=False)
+    #         ax.add_patch(gt_rect)
         
-        rect = plt.Rectangle(tuple(result_bb[0,:2]),result_bb[0,2],result_bb[0,3], 
-                linewidth=3, edgecolor="#ff0000", zorder=1, fill=False)
-        ax.add_patch(rect)
+    #     rect = plt.Rectangle(tuple(result_bb[0,:2]),result_bb[0,2],result_bb[0,3], 
+    #             linewidth=3, edgecolor="#ff0000", zorder=1, fill=False)
+    #     ax.add_patch(rect)
 
-        if display:
-            plt.pause(.01)
-            plt.draw()
-        if savefig:
-            fig.savefig(os.path.join(savefig_dir,'0000.png'),dpi=dpi)
+    #     if display:
+    #         plt.pause(.01)
+    #         plt.draw()
+    #     if savefig:
+    #         fig.savefig(os.path.join(savefig_dir,'0000.png'),dpi=dpi)
     
     # Main loop
-    for i in range(1,len(img_list)):
+    i = 0
+    while True:
+        i += 1
+        imagefile = handle.frame()
+        if not imagefile:
+            break
 
         tic = time.time()
         # Load image
-        image = Image.open(img_list[i]).convert('RGB')
+        image = Image.open(imagefile).convert('RGB')
 
         # Estimate target bbox
         samples = gen_samples(sample_generator, target_bbox, opts['n_samples'])
@@ -237,13 +254,15 @@ def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
             bbreg_bbox = target_bbox
         
         # Copy previous result at failure
-        if not success:
-            target_bbox = result[i-1]
-            bbreg_bbox = result_bb[i-1]
+        # if not success:
+        #     target_bbox = result[i-1]
+        #     bbreg_bbox = result_bb[i-1]
         
         # Save result
-        result[i] = target_bbox
-        result_bb[i] = bbreg_bbox
+        # result[i] = target_bbox
+        # result_bb[i] = bbreg_bbox
+
+        handle.report(vot.Rectangle(bbreg_bbox[0], bbreg_bbox[1], bbreg_bbox[2], bbreg_bbox[3]), target_score)
 
         # Data collect
         if success:
@@ -282,55 +301,31 @@ def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
         spf_total += spf
 
         # Display
-        if display or savefig:
-            im.set_data(image)
+        # if display or savefig:
+        #     im.set_data(image)
 
-            if gt is not None:
-                gt_rect.set_xy(gt[i,:2])
-                gt_rect.set_width(gt[i,2])
-                gt_rect.set_height(gt[i,3])
+        #     if gt is not None:
+        #         gt_rect.set_xy(gt[i,:2])
+        #         gt_rect.set_width(gt[i,2])
+        #         gt_rect.set_height(gt[i,3])
 
-            rect.set_xy(result_bb[i,:2])
-            rect.set_width(result_bb[i,2])
-            rect.set_height(result_bb[i,3])
+        #     rect.set_xy(result_bb[i,:2])
+        #     rect.set_width(result_bb[i,2])
+        #     rect.set_height(result_bb[i,3])
             
-            if display:
-                plt.pause(.01)
-                plt.draw()
-            if savefig:
-                fig.savefig(os.path.join(savefig_dir,'%04d.png'%(i)),dpi=dpi)
+        #     if display:
+        #         plt.pause(.01)
+        #         plt.draw()
+        #     if savefig:
+        #         fig.savefig(os.path.join(savefig_dir,'%04d.png'%(i)),dpi=dpi)
 
-        if gt is None:
-            print "Frame %d/%d, Score %.3f, Time %.3f" % \
-                (i, len(img_list), target_score, spf)
-        else:
-            print "Frame %d/%d, Overlap %.3f, Score %.3f, Time %.3f" % \
-                (i, len(img_list), overlap_ratio(gt[i],result_bb[i])[0], target_score, spf)
+        # if gt is None:
+        #     print "Frame %d/%d, Score %.3f, Time %.3f" % \
+        #         (i, len(img_list), target_score, spf)
+        # else:
+        #     print "Frame %d/%d, Overlap %.3f, Score %.3f, Time %.3f" % \
+        #         (i, len(img_list), overlap_ratio(gt[i],result_bb[i])[0], target_score, spf)
 
-    fps = len(img_list) / spf_total
-    return result, result_bb, fps
+    return
 
-
-if __name__ == "__main__":
-    
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-s', '--seq', default='', help='input seq')
-    parser.add_argument('-j', '--json', default='', help='input json')
-    parser.add_argument('-f', '--savefig', action='store_true')
-    parser.add_argument('-d', '--display', action='store_true')
-    
-    args = parser.parse_args()
-    assert(args.seq != '' or args.json != '')
-    
-    # Generate sequence config
-    img_list, init_bbox, gt, savefig_dir, display, result_path = gen_config(args)
-
-    # Run tracker
-    result, result_bb, fps = run_mdnet(img_list, init_bbox, gt=gt, savefig_dir=savefig_dir, display=display)
-    
-    # Save result
-    res = {}
-    res['res'] = result_bb.round().tolist()
-    res['type'] = 'rect'
-    res['fps'] = fps
-    json.dump(res, open(result_path, 'w'), indent=2)
+run_mdnet()

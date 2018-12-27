@@ -1,11 +1,16 @@
+from __future__ import print_function
 import numpy as np
 import os
+import cv2
 import sys
 import time
 import argparse
 import json
 from PIL import Image
 import matplotlib.pyplot as plt
+from os.path import join
+from glob import glob
+from os import walk
 
 import torch
 import torch.utils.data as data
@@ -116,9 +121,28 @@ def train(model, criterion, optimizer, pos_feats, neg_feats, maxiter, in_layer='
         #print "Iter %d, Loss %.4f" % (iter, loss.data[0])
 
 
-def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
+def run_mdnet(groundtruth_path, image_path, out_video):
+    print('processing sequence', out_video)
+    with open(groundtruth_path) as f:
+        groundtruth = f.readlines()
+
+    groundtruth = [x.rstrip() for x in groundtruth]
+
+    img_list = [y for x in walk(image_path) for y in glob(join(x[0], '*.jpg'))]
+    img_list.sort()
+
+    assert len(img_list) == len(groundtruth)
+
+    image = cv2.imread(img_list[0])
+    height, width = image.shape[:2]
+    writer = cv2.VideoWriter(out_video, cv2.VideoWriter_fourcc('X','V','I','D'), 15, (width , height))
+
+    if not writer.isOpened():
+        print('Failed to open video')
+        return
 
     # Init bbox
+    init_bbox = [float(x) for x in groundtruth[0].split(',')]
     target_bbox = np.array(init_bbox)
     result = np.zeros((len(img_list),4))
     result_bb = np.zeros((len(img_list),4))
@@ -178,36 +202,37 @@ def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
     spf_total = time.time()-tic
 
     # Display
-    savefig = savefig_dir != ''
-    if display or savefig: 
-        dpi = 80.0
-        figsize = (image.size[0]/dpi, image.size[1]/dpi)
+    # savefig = savefig_dir != ''
+    # if display or savefig: 
+    #     dpi = 80.0
+    #     figsize = (image.size[0]/dpi, image.size[1]/dpi)
 
-        fig = plt.figure(frameon=False, figsize=figsize, dpi=dpi)
-        ax = plt.Axes(fig, [0., 0., 1., 1.])
-        ax.set_axis_off()
-        fig.add_axes(ax)
-        im = ax.imshow(image, aspect='normal')
+    #     fig = plt.figure(frameon=False, figsize=figsize, dpi=dpi)
+    #     ax = plt.Axes(fig, [0., 0., 1., 1.])
+    #     ax.set_axis_off()
+    #     fig.add_axes(ax)
+    #     im = ax.imshow(image, aspect='normal')
 
-        if gt is not None:
-            gt_rect = plt.Rectangle(tuple(gt[0,:2]),gt[0,2],gt[0,3], 
-                    linewidth=3, edgecolor="#00ff00", zorder=1, fill=False)
-            ax.add_patch(gt_rect)
+    #     if gt is not None:
+    #         gt_rect = plt.Rectangle(tuple(gt[0,:2]),gt[0,2],gt[0,3], 
+    #                 linewidth=3, edgecolor="#00ff00", zorder=1, fill=False)
+    #         ax.add_patch(gt_rect)
         
-        rect = plt.Rectangle(tuple(result_bb[0,:2]),result_bb[0,2],result_bb[0,3], 
-                linewidth=3, edgecolor="#ff0000", zorder=1, fill=False)
-        ax.add_patch(rect)
+    #     rect = plt.Rectangle(tuple(result_bb[0,:2]),result_bb[0,2],result_bb[0,3], 
+    #             linewidth=3, edgecolor="#ff0000", zorder=1, fill=False)
+    #     ax.add_patch(rect)
 
-        if display:
-            plt.pause(.01)
-            plt.draw()
-        if savefig:
-            fig.savefig(os.path.join(savefig_dir,'0000.png'),dpi=dpi)
+    #     if display:
+    #         plt.pause(.01)
+    #         plt.draw()
+    #     if savefig:
+    #         fig.savefig(os.path.join(savefig_dir,'0000.png'),dpi=dpi)
     
     # Main loop
     for i in range(1,len(img_list)):
 
-        tic = time.time()
+        timer = cv2.getTickCount()
+
         # Load image
         image = Image.open(img_list[i]).convert('RGB')
 
@@ -278,59 +303,64 @@ def run_mdnet(img_list, init_bbox, gt=None, savefig_dir='', display=False):
             neg_data = torch.stack(neg_feats_all,0).view(-1,feat_dim)
             train(model, criterion, update_optimizer, pos_data, neg_data, opts['maxiter_update'])
         
-        spf = time.time()-tic
-        spf_total += spf
+        # Calculate Frames per second (FPS)
+        fps = cv2.getTickFrequency() / (cv2.getTickCount() - timer)
+
+        image = cv2.imread(img_list[i])
+        polygon = [float(x) for x in groundtruth[i].split(',')]
+        polygon = [int(x) for x in polygon]
+
+        cv2.rectangle(image, (polygon[0], polygon[1]), (polygon[0]+polygon[2], polygon[1]+polygon[3]), (0, 0, 255), 2)
+        cv2.rectangle(image, (bbreg_bbox[0], bbreg_bbox[1]), (bbreg_bbox[0]+bbreg_bbox[2], bbreg_bbox[1]+bbreg_bbox[3]), (255,0,0), 2)
+
+        # Display tracker type on frame
+        cv2.putText(image, "MDNet", (50,20), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (230,170,50),2)
+
+        # Display FPS on frame
+        cv2.putText(image, "FPS : " + str(int(fps)), (50,50), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (230,170,50), 2)
+
+        writer.write(image)
 
         # Display
-        if display or savefig:
-            im.set_data(image)
+        # if display or savefig:
+        #     im.set_data(image)
 
-            if gt is not None:
-                gt_rect.set_xy(gt[i,:2])
-                gt_rect.set_width(gt[i,2])
-                gt_rect.set_height(gt[i,3])
+        #     if gt is not None:
+        #         gt_rect.set_xy(gt[i,:2])
+        #         gt_rect.set_width(gt[i,2])
+        #         gt_rect.set_height(gt[i,3])
 
-            rect.set_xy(result_bb[i,:2])
-            rect.set_width(result_bb[i,2])
-            rect.set_height(result_bb[i,3])
+        #     rect.set_xy(result_bb[i,:2])
+        #     rect.set_width(result_bb[i,2])
+        #     rect.set_height(result_bb[i,3])
             
-            if display:
-                plt.pause(.01)
-                plt.draw()
-            if savefig:
-                fig.savefig(os.path.join(savefig_dir,'%04d.png'%(i)),dpi=dpi)
+        #     if display:
+        #         plt.pause(.01)
+        #         plt.draw()
+        #     if savefig:
+        #         fig.savefig(os.path.join(savefig_dir,'%04d.png'%(i)),dpi=dpi)
 
-        if gt is None:
-            print "Frame %d/%d, Score %.3f, Time %.3f" % \
-                (i, len(img_list), target_score, spf)
-        else:
-            print "Frame %d/%d, Overlap %.3f, Score %.3f, Time %.3f" % \
-                (i, len(img_list), overlap_ratio(gt[i],result_bb[i])[0], target_score, spf)
+        # if gt is None:
+        #     print "Frame %d/%d, Score %.3f, Time %.3f" % \
+        #         (i, len(img_list), target_score, spf)
+        # else:
+        #     print "Frame %d/%d, Overlap %.3f, Score %.3f, Time %.3f" % \
+        #         (i, len(img_list), overlap_ratio(gt[i],result_bb[i])[0], target_score, spf)
 
-    fps = len(img_list) / spf_total
-    return result, result_bb, fps
+    # fps = len(img_list) / spf_total
+    writer.release()
+
+    return
 
 
-if __name__ == "__main__":
-    
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-s', '--seq', default='', help='input seq')
-    parser.add_argument('-j', '--json', default='', help='input json')
-    parser.add_argument('-f', '--savefig', action='store_true')
-    parser.add_argument('-d', '--display', action='store_true')
-    
-    args = parser.parse_args()
-    assert(args.seq != '' or args.json != '')
-    
-    # Generate sequence config
-    img_list, init_bbox, gt, savefig_dir, display, result_path = gen_config(args)
+sequence_root_folder = '/mnt/Data-1/Projects/vot-toolkit/workspace-vot2018/sequences/'
 
-    # Run tracker
-    result, result_bb, fps = run_mdnet(img_list, init_bbox, gt=gt, savefig_dir=savefig_dir, display=display)
-    
-    # Save result
-    res = {}
-    res['res'] = result_bb.round().tolist()
-    res['type'] = 'rect'
-    res['fps'] = fps
-    json.dump(res, open(result_path, 'w'), indent=2)
+with open(join(sequence_root_folder, 'list.txt')) as f:
+    seq_list = f.readlines()
+
+seq_list = [x.rstrip() for x in seq_list]
+
+for sequence in seq_list:
+    ground_truth = join(join(sequence_root_folder, sequence), 'groundtruth.txt')
+    image_folder = join(join(sequence_root_folder, sequence), 'color')
+    run_mdnet(ground_truth, image_folder, './videos/'+sequence+'.avi')

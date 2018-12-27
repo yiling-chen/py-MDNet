@@ -3,7 +3,8 @@ from collections import OrderedDict
 opts = OrderedDict()
 opts['use_gpu'] = True
 
-opts['model_path'] = '../models/mdnet_vot-otb.pth'
+# opts['model_path'] = '../models/mdnet_vot-otb.pth'
+opts['model_path'] = '/mnt/Data-1/Projects/trackers/py-MDNet/models/mdnet_vot-otb.pth'
 
 opts['img_size'] = 107
 opts['padding'] = 16
